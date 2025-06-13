@@ -1,0 +1,293 @@
+#include <gmp.h>
+#include <string>
+#include <vector>
+
+#include "cgal_definitions.h"
+#include "utils.hpp"
+
+using namespace std;
+
+string utils::simple_or_not(const Polygon_2& p) {
+    if (p.is_simple())
+        return "Simple Polygon";
+    else
+        return "Not Simple Polygon";
+}
+
+namespace utils
+{
+
+    template <typename CDT>
+    int countObtuseTriangles(const CDT &cdt)
+    {
+        int count = 0;
+
+        for (auto face = cdt.finite_faces_begin(); face != cdt.finite_faces_end(); ++face)
+        {
+            // Access the vertices of the triangle
+            auto p1 = face->vertex(0)->point();
+            auto p2 = face->vertex(1)->point();
+            auto p3 = face->vertex(2)->point();
+
+            // Calculate squared edge lengths
+            double a2 = CGAL::squared_distance(p2, p3);
+            double b2 = CGAL::squared_distance(p1, p3);
+            double c2 = CGAL::squared_distance(p1, p2);
+
+            // Check for obtuse angle using the law of cosines
+            if (a2 + b2 < c2 || b2 + c2 < a2 || c2 + a2 < b2)
+            {
+                ++count;
+            }
+        }
+
+        return count;
+    }
+
+}
+
+bool utils::is_obtuse(Point& a, Point& b, Point& c) {
+    if (CGAL::angle(a, b, c) == CGAL::OBTUSE) {
+        return true;
+    }
+
+    if (CGAL::angle(b, a, c) == CGAL::OBTUSE) {
+        return true;
+    }
+
+    if (CGAL::angle(a, c, b) == CGAL::OBTUSE) {
+        return true;
+    }
+
+    return false;
+}
+
+int utils::find_obtuse_angle(Point& a, Point& b, Point& c) {
+    if (CGAL::angle(a, b, c) == CGAL::OBTUSE) {
+        return 1;
+    }
+
+    if (CGAL::angle(b, a, c) == CGAL::OBTUSE) {
+        return 0;
+    }
+
+    if (CGAL::angle(a, c, b) == CGAL::OBTUSE) {
+        return 2;
+    }
+
+    return -1;
+}
+
+bool utils::checkConstraints(const CDT& cdt, const Point& p1, const Point& p2) {
+    CDT::Segment seg(p1, p2);
+
+    for (auto edge = cdt.finite_edges_begin(); edge != cdt.finite_edges_end(); ++edge) {
+        CDT::Edge edge_info = *edge;
+
+        if (cdt.is_constrained(edge_info)) {
+
+            auto segment = cdt.segment(edge);
+
+            if (segment.source() == p1 && segment.target() == p2) {
+                return true;
+            }
+            if (segment.source() == p2 && segment.target() == p1) {
+                return true;
+            }
+        }
+    }
+    return false; // The pair is not in the constraints
+}
+
+std::tuple<int, int> utils::findOppositeEdge(int vertexIndex) {
+    switch (vertexIndex) {
+    case 0:                           // Vertex a
+        return std::make_tuple(1, 2); // Edge bc
+    case 1:                           // Vertex b
+        return std::make_tuple(2, 0); // Edge ca
+    case 2:                           // Vertex c
+        return std::make_tuple(0, 1); // Edge ab
+    default:
+        cout << "CRITICAL ERROR: Invalid vertex index. Must be 0, 1, or 2. \n";
+        exit(1);
+    }
+}
+
+string utils::coordinate_to_rational(const K::FT& coord) {
+    const auto exact_coord = CGAL::exact(coord);
+
+    cout << exact_coord << endl;
+
+    const mpq_t* gmpq_ptr = reinterpret_cast<const mpq_t*>(&exact_coord);
+
+    mpz_t num, den;
+    mpz_init(num);
+    mpz_init(den);
+
+    mpq_get_num(num, *gmpq_ptr); // Get the numerator
+    mpq_get_den(den, *gmpq_ptr); // Get the denominator
+
+    char* num_str = mpz_get_str(nullptr, 10, num);
+    char* den_str = mpz_get_str(nullptr, 10, den);
+
+    std::string result = std::string(num_str) + "/" + std::string(den_str);
+
+    mpz_clear(num);
+    mpz_clear(den);
+
+    return result;
+}
+
+Point utils::findGeometricalMean(Polygon& polygon) {
+    K::FT x_sum = 0;
+    K::FT y_sum = 0;
+    K::FT n = polygon.size();
+
+    for (auto vertex = polygon.vertices_begin(); vertex != polygon.vertices_end(); ++vertex) {
+        x_sum += vertex->x();
+        y_sum += vertex->y();
+    }
+
+    return Point(x_sum / n, y_sum / n);
+}
+
+bool utils::isConvex(Polygon& polygon) {
+    if (polygon.size() < 3) {
+        return false;
+    }
+
+    auto orientation = polygon.orientation();
+
+    for (size_t i = 0; i < polygon.size(); ++i) {
+        const Point& p0 = polygon[i];
+        const Point& p1 = polygon[(i + 1) % polygon.size()];
+        const Point& p2 = polygon[(i + 2) % polygon.size()];
+
+        if (CGAL::orientation(p0, p1, p2) != orientation) {
+            return false;
+        }
+    }
+    return true;
+}
+
+Face* utils::findNeighbor(Graph& graph, Point& a, Point& b, Point& c, int vertex_index, int & neighbor_vertex_index) {
+    CDT& cdt = *(graph.cdt);
+    bool no_neighbor_because_of_constraint = false;
+
+    if (vertex_index == 0) {
+        no_neighbor_because_of_constraint = checkConstraints(cdt, b, c);
+    }
+    if (vertex_index == 1) {
+        no_neighbor_because_of_constraint = checkConstraints(cdt, a, c);
+    }
+    if (vertex_index == 2) {
+        no_neighbor_because_of_constraint = checkConstraints(cdt, a, b);
+    }
+
+    if (no_neighbor_because_of_constraint) {
+        return nullptr;
+    }
+
+    Point x, y;
+
+    if (vertex_index == 0) {
+        x = b;
+        y = c;
+    }
+    if (vertex_index == 1) {
+        x = a;
+        y = c;
+    }
+    if (vertex_index == 2) {
+        x = a;
+        y = b;
+    }
+
+    for (auto fit = cdt.finite_faces_begin(); fit != cdt.finite_faces_end(); ++fit) {
+        Point aa = fit->vertex(0)->point();
+        Point bb = fit->vertex(1)->point();
+        Point cc = fit->vertex(2)->point();
+
+        if (aa == a && bb == b && cc == c) {
+            continue;
+        }
+
+        if ((aa == x && bb == y) || (aa == y && bb == x)) {
+            neighbor_vertex_index = 2;
+            return &(*fit);
+        }
+
+        if ((bb == x && cc == y) || (bb == y && cc == x)) {
+            neighbor_vertex_index = 0;
+            return &(*fit);
+        }
+
+        if ((cc == x && aa == y) || (cc == y && aa == x)) {
+            neighbor_vertex_index = 1;
+            return &(*fit);            
+        }
+    }
+
+    return nullptr;
+}
+
+Point utils::centroid(std::vector<Point>& points) {
+    K::FT sumX = 0;
+    K::FT sumY = 0;
+
+    for (const auto& point : points) {
+        sumX += point.x();
+        sumY += point.y();
+    }
+
+    K::FT centerX = sumX / K::FT(points.size());
+    K::FT centerY = sumY / K::FT(points.size());
+
+    return Point(centerX, centerY);
+}
+
+bool utils::is_convex(const std::vector<Point>& boundary) {
+    int n = boundary.size();
+    if (n < 3) {
+        return false;
+    }
+
+    bool got_positive = false;
+    bool got_negative = false;
+
+    for (int i = 0; i < n; ++i) {
+        const Point& p0 = boundary[i];
+        const Point& p1 = boundary[(i + 1) % n];
+        const Point& p2 = boundary[(i + 2) % n];
+
+        K::FT cross_product = (p1.x() - p0.x()) * (p2.y() - p1.y()) - (p1.y() - p0.y()) * (p2.x() - p1.x());
+
+        if (cross_product > 0) {
+            got_positive = true;
+        } else if (cross_product < 0) {
+            got_negative = true;
+        }
+
+        if (got_positive && got_negative) {
+            return false;
+        }
+    }
+
+    return true; // All cross products had the same sign, so the polygon is convex
+}
+
+int utils::countObtuseTriangles(CDT& cdt) {
+    int counter = 0;
+
+     for (auto fit = cdt.finite_faces_begin(); fit != cdt.finite_faces_end(); ++fit) {
+        Point a = fit->vertex(0)->point();
+        Point b = fit->vertex(1)->point();
+        Point c = fit->vertex(2)->point();
+
+        if (utils::is_obtuse(a, b, c)) {
+            counter++;
+        }
+    }
+
+    return counter;
+}
